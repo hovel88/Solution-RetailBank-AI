@@ -1,0 +1,38 @@
+@startuml initiative_2_C4_Container
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+
+title C4 Container — Инициатива №2: Распознавание и оцифровка сканов кредитной заявки
+
+Person(underwriter, "Андеррайтер", "Разбирает пакет заявки, принимает кредитное решение")
+
+System_Boundary(bank, "Контур банка") {
+    Container(queue_in, "Очередь документов", "Kafka", "Приём документов пакета кредитной заявки")
+    Container(router, "Маршрутизатор формата", "Приложение", "Excel / выгрузка — парсер; скан / фото — OCR")
+    Container(ocr, "OCR / распознавание", "CV/OCR-модель", "Скан или фото → текст")
+    Container(store, "Хранилище канонического документа", "Хранилище", "Распознанный текст + структура + уверенность")
+    Container(extract, "Извлечение полей", "LLM", "Поля из текста со ссылкой на источник и уверенностью")
+    ContainerDb(refdata, "Справочники", "БД", "Коды, Форматы, инварианты и т.д.")
+    Container(normalize, "Нормализация и сверка", "Приложение", "Справочники, форматы, арифметические инварианты")
+    Container(validator, "Валидатор контракта", "Приложение", "Обязательные поля, ссылка на источник, отсутствие галлюцинаций")
+    Container(card, "Карточка пакета для андеррайтера", "Приложение", "Извлечённые поля с пометками")
+    ContainerDb(log, "Журнал решений", "Хранилище", "Версия модели, вход, выход, решение человека")
+}
+
+System_Ext(client, "Клиент / источник документов", "Присылает пакет")
+
+Rel(client, queue_in, "Пакет документов\n(⚠️1)")
+Rel(queue_in, router, "Документы")
+Rel(router, ocr, "Скан / фото\n(⚠️2)")
+Rel(router, store, "Excel / выгрузка")
+Rel(ocr, store, "Текст + уверенность\n(⚠️3)")
+Rel(store, extract, "Текст\n(⚠️4)")
+Rel(extract, normalize, "Поля со ссылкой на источник\n(⚠️5)")
+Rel(refdata, normalize, "Сравнение с данными справочников")
+Rel(normalize, validator, "Нормализованные поля")
+Rel(validator, card, "ok / ok_with_notes\n(⚠️6)")
+Rel(card, underwriter, "Карточка пакета")
+Rel(underwriter, log, "Решение")
+Rel(validator, log, "Результат проверки\n(⚠️7)")
+Rel(extract, log, "Версия модели")
+
+@enduml

@@ -1,0 +1,26 @@
+@startuml initiative_15_C4_Container
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+
+title C4 Container — №15: Прогноз нагрузки на кол-центр
+
+Person(planner, "Планировщик смен", "Строит расписание под прогноз")
+
+System_Boundary(bank, "Контур банка") {
+    ContainerDb(history, "История обращений", "Хранилище", "Факты по часам/дням/неделям")
+    Container(prepare, "Подготовка временного ряда", "Приложение", "Агрегация, проверка непрерывности, календарные признаки, лаги")
+    Container(model, "Модель прогноза", "ML (градиентный бустинг / ARIMA)", "Прогноз числа обращений на период")
+    Container(interval, "Интервал неопределённости", "Приложение", "Оценка диапазона прогноза")
+    Container(schedule, "Интерфейс планировщика", "Приложение", "Прогноз с диапазоном, планирование смен")
+    ContainerDb(log, "Журнал прогнозов", "Хранилище", "Версия модели, вход, прогноз, факт")
+}
+
+Rel(history, prepare, "История\n(⚠️1)")
+Rel(prepare, model, "Подготовленный ряд\n(⚠️2)")
+Rel(model, interval, "Прогноз\n(⚠️3)")
+Rel(interval, schedule, "Прогноз с диапазоном\n(⚠️4)")
+Rel(schedule, planner, "Прогноз и планирование")
+Rel(planner, log, "Утверждённое расписание")
+Rel(model, log, "Версия модели и прогноз\n(⚠️5)")
+Rel(prepare, log, "Версия подготовки\n(⚠️6)")
+
+@enduml

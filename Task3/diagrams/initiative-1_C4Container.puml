@@ -1,0 +1,56 @@
+@startuml initiative_1_C4_Container
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+
+title C4 Container — Флагман: сервис приоритизации очереди финмониторинга
+
+Person(analyst, "Аналитик финмониторинга", "Разбирает операции, принимает решение о блокировке/отказе")
+Person_Ext(regulator, "Надзор / ПОД-ФТ", "Внешние требования и предписания (вне контура)")
+System_Ext(abs, "Источник операций", "")
+System_Ext(know_client, "Платформа «Знай своего клиента»", "Вспомогательный сигнал уровня риска клиента")
+
+System_Boundary(bank, "Контур банка") {
+    Container(queue_in, "Очередь входящих операций", "Kafka", "Приём операций из банковских систем и других каналов, буфер под пиковую нагрузку; retry-политика")
+    Container(features, "Сервис признаков", "Приложение", "Табличные признаки + агрегаты по клиенту/контрагенту; читает кеш LLM-нормализации")
+    System_Boundary(llm_edge, "Опциональный LLM-контур") {
+        Container(llm_norm, "LLM-нормализация текста (опционально)", "LLM", "Признаки/эмбеддинги из свободного текста назначения платежа. Включается только при доказанном приросте на приёмочном наборе")
+        ContainerDb(llm_cache, "Кеш LLM-нормализации", "Хранилище", "Результат нормализации текста по operation_id + версия LLM; чтобы retry не гонял LLM повторно")
+    }
+    Container(model, "Модель ранжирования", "ML (градиентный бустинг)", "Оценка риска операции; обучаемое звено")
+    Container(calib, "Калибровка и порог", "Приложение", "Приведение оценки к рабочей шкале, выбор top-N по пропускной способности")
+    Container(rules, "Детерминированные бизнес-правила", "Приложение", "Дробление под порог, дубли, лимиты, накопительные проверки; работают без модели (fallback)")
+    Container(validator, "Валидатор контракта", "Приложение", "Единственное место, где решается судьба операции: схема, диапазоны, инварианты, отсутствие утечек; формирует validation_status и validation_notes")
+    Container(expert_queue, "Очередь и интерфейс аналитика", "Kafka/RabbitMQ/Приложение", "Сообщения контракта (validation_status, validation_notes); действия: подтвердить / отклонить / на расследование")
+    ContainerDb(quarantine, "Карантин", "Хранилище", "Операции с критичными нарушениями контракта; разбор дежурным")
+    ContainerDb(log, "Журнал решений", "Хранилище", "Версия модели, вход, выход, сработавшие признаки, validation_status, решение человека, время")
+    Container(monitor, "Мониторинг и алерты", "Приложение", "Сигналы по входу, модели, очереди, бизнес-метрике")
+    ContainerDb(refdata, "Справочники и лимиты", "БД", "Тарифы, лимиты, ОКВЭД, перечни")
+}
+
+Rel(abs, queue_in, "Операции\n(⚠️1)", "API / выгрузка")
+Rel(queue_in, features, "Операции для расчёта признаков")
+Rel(queue_in, llm_norm, "Текст назначения платежа (если включена)\n(⚠️2)")
+Rel(llm_norm, llm_cache, "Результат нормализации (кеш)\n(⚠️3)")
+Rel(llm_cache, features, "Признаки из текста (из кеша или после нормализации)")
+Rel(refdata, features, "Справочники, лимиты")
+Rel(know_client, features, "Уровень риска клиента (вспомогательный)\n(⚠️4)")
+Rel(features, model, "Вектор признаков")
+Rel(features, rules, "Вектор признаков", "fallback, если модель недоступна")
+Rel(model, calib, "Оценка риска\n(⚠️5)")
+Rel(calib, rules, "Top-N и оценки")
+Rel(rules, validator, "Операции с отметками правил и оценкой (или без оценки при fallback)")
+Rel(validator, expert_queue, "ok или ok_with_notes\n(⚠️6)", "контракт: сообщение с validation_status и validation_notes")
+Rel(validator, quarantine, "quarantined", "критичные нарушения контракта")
+Rel(expert_queue, analyst, "Очередь на разбор")
+Rel(analyst, log, "Решение человека")
+Rel(validator, log, "Результат проверки контракта")
+Rel(model, log, "Версия модели и оценка")
+Rel(monitor, log, "")
+Rel(monitor, expert_queue, "")
+Rel(monitor, model, "")
+Rel(monitor, features, "")
+
+note bottom of log
+    ⚠️7
+end note
+
+@enduml

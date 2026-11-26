@@ -1,0 +1,73 @@
+@startuml initiative_1_C4_Component
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+title C4 Component — Флагман: детализация валидатора контракта и конвейера признаков
+
+Person(analyst, "Аналитик финмониторинга", "Разбирает операции, принимает решение о блокировке/отказе")
+Person_Ext(regulator, "Надзор / ПОД-ФТ", "Внешние требования и предписания (вне контура)")
+System_Ext(abs, "Источник операций")
+System_Ext(know_client, "Платформа «Знай своего клиента»")
+
+System_Boundary(bank, "Контур банка") {
+
+    System_Boundary(llm_edge, "Опциональный LLM-контур") {
+        Container(llm_norm, "LLM-нормализация текста (опционально)", "LLM", "Признаки/эмбеддинги из свободного текста назначения платежа. Включается только при доказанном приросте на приёмочном наборе")
+        ContainerDb(llm_cache, "Кеш LLM-нормализации", "Хранилище", "Результат нормализации текста по operation_id + версия LLM; чтобы retry не гонял LLM повторно")
+    }
+
+    Container_Boundary(features_boundary, "Сервис признаков") {
+        Component(feature_calc, "Расчёт табличных признаков", "Приложение", "Сумма, контрагент, ОКВЭД, дата, канал, агрегаты по клиенту/контрагенту")
+        Component(llm_feature_reader, "Чтение LLM-признаков из кеша", "Приложение", "Берёт признаки из llm_cache по operation_id + версия LLM")
+        Component(feature_vector, "Сборка вектора признаков", "Приложение", "Объединяет табличные и LLM-признаки; проверяет наличие обязательных")
+    }
+
+    Container_Boundary(calibrator_boundary, "Калибровка и порог") {
+        Component(calibrator, "Калибровка", "Приложение", "Приведение оценки к рабочей шкале")
+        Component(threshold, "Порог и top-N", "Приложение", "Выбор top-N по пропускной способности")
+    }
+
+    Container_Boundary(validator_boundary, "Валидатор контракта") {
+        Component(schema_check, "Проверка схемы", "Приложение", "Обязательные поля, типы, диапазоны; формирует базовый validation_status")
+        Component(invariant_check, "Проверка инвариантов", "Приложение", "Сумма батча, top-N ≤ пропускной способности, уникальность operation_id, монотонность risk_score")
+        Component(leak_check, "Проверка утечек", "Приложение", "features_used не содержит escalated, investigation_outcome")
+        Component(notes_former, "Формирование validation_notes", "Приложение", "Собирает пометки из проверок; формирует итоговый validation_status (ok / ok_with_notes / quarantined)")
+        Component(contract_publisher, "Публикация контракта", "Приложение", "Отправляет сообщение в очередь аналитика или в карантин")
+    }
+
+    Container(model_scorer, "Модель ранжирования", "ML (градиентный бустинг)", "Оценка риска операции. Обучаемое звено")
+    Container(queue_in, "Очередь входящих операций", "Kafka")
+    Container(rules, "Детерминированные бизнес-правила", "Приложение")
+    Container(expert_queue, "Очередь и интерфейс аналитика", "Kafka/RabbitMQ/Приложение")
+    ContainerDb(quarantine, "Карантин", "Хранилище")
+    ContainerDb(log, "Журнал решений", "Хранилище")
+    ContainerDb(refdata, "Справочники и лимиты", "БД")
+}
+
+Rel(abs, queue_in, "Операции", "API / выгрузка")
+Rel(queue_in, feature_calc, "Операции для расчета признаков")
+Rel(queue_in, llm_norm, "Текст назначения платежа (если включена)")
+Rel(llm_norm, llm_cache, "Результат нормализации (кеш)")
+Rel(llm_cache, llm_feature_reader, "LLM-признаки")
+Rel(refdata, feature_calc, "Справочники, лимиты")
+Rel(feature_calc, feature_vector, "Табличные признаки")
+Rel(llm_feature_reader, feature_vector, "LLM-признаки")
+Rel(know_client, feature_vector, "Уровень риска клиента (вспомогательный)")
+Rel(feature_vector, model_scorer, "Вектор признаков")
+Rel(model_scorer, calibrator, "Оценка риска")
+Rel(calibrator, threshold, "Калиброванная оценка")
+Rel(threshold, rules, "Top-N и оценки")
+Rel(rules, schema_check, "Операции с отметками правил")
+Rel(schema_check, invariant_check, "Схема валидна")
+Rel(schema_check, notes_former, "Нарушения схемы", "ok_with_notes / quarantined")
+Rel(invariant_check, leak_check, "Инварианты сошлись")
+Rel(invariant_check, notes_former, "Нарушения инвариантов", "ok_with_notes / quarantined")
+Rel(leak_check, notes_former, "Проверка утечек пройдена или нет")
+Rel(notes_former, contract_publisher, "validation_status и validation_notes")
+Rel(contract_publisher, expert_queue, "ok / ok_with_notes")
+Rel(contract_publisher, quarantine, "quarantined")
+Rel(contract_publisher, log, "Результат проверки")
+Rel(feature_vector, rules, "Вектор признаков", "fallback, если модель недоступна")
+Rel(expert_queue, analyst, "Очередь на разбор")
+Rel(analyst, log, "Решение человека")
+
+@enduml
