@@ -10,6 +10,8 @@ System_Ext(know_client, "Платформа «Знай своего клиент
 
 System_Boundary(bank, "Контур банка") {
     Container(queue_in, "Очередь входящих операций", "Kafka", "Приём операций из банковских систем и других каналов, буфер под пиковую нагрузку; retry-политика")
+    Container(dispatcher, "Обработчик очереди (оркестратор)", "Приложение", "Забирает операцию из queue_in. Проверяет обязательность (крупная сумма, 115-ФЗ, высокий риск) по полям самой операции. Вызывает features/validator. При сбое кладёт в retry_queue с пометкой")
+    ContainerDb(retry_queue, "Отложенная очередь (retry)", "Хранилище", "Операции, которые не могут быть обработаны сейчас (features/validator недоступны). Ждут восстановления. Идемпотентность по operation_id")
     Container(features, "Сервис признаков", "Приложение", "Табличные признаки + агрегаты по клиенту/контрагенту; читает кеш LLM-нормализации")
     System_Boundary(llm_edge, "Опциональный LLM-контур") {
         Container(llm_norm, "LLM-нормализация текста (опционально)", "LLM", "Признаки/эмбеддинги из свободного текста назначения платежа. Включается только при доказанном приросте на приёмочном наборе")
@@ -26,18 +28,27 @@ System_Boundary(bank, "Контур банка") {
     ContainerDb(refdata, "Справочники и лимиты", "БД", "Тарифы, лимиты, ОКВЭД, перечни")
 }
 
+System_Boundary(standard_queue_boundary, "Штатная очередь\n(существующий процесс)") {
+    Container(standard_rules, "Отбор правилами и жалобами", "Приложение", "Существующий отбор операций для финмониторинга. Работает независимо от ML-сервиса")
+    Container(standard_queue, "Штатная очередь эксперта", "Приложение", "Текущая очередь операций, отобранных правилами и жалобами. Пополняется независимо от сбоев ML-сервиса")
+}
+
 Rel(abs, queue_in, "Операции\n(⚠️1)", "API / выгрузка")
-Rel(queue_in, features, "Операции для расчёта признаков")
+Rel(queue_in, dispatcher, "Операция")
+Rel(dispatcher, features, "Вызов признаков")
+Rel(dispatcher, rules, "Обязательные сигналы (крупные суммы, 115-ФЗ, высокий риск)", "обход сервиса признаков по полям самой операции, проверка обязательности — детерминированная, не требует features")
+Rel(dispatcher, retry_queue, "features/validator недоступен", "кладёт операцию с пометкой «признаки недоступны» / «валидатор недоступен»")
 Rel(queue_in, llm_norm, "Текст назначения платежа (если включена)\n(⚠️2)")
 Rel(llm_norm, llm_cache, "Результат нормализации (кеш)\n(⚠️3)")
 Rel(llm_cache, features, "Признаки из текста (из кеша или после нормализации)")
 Rel(refdata, features, "Справочники, лимиты")
 Rel(know_client, features, "Уровень риска клиента (вспомогательный)\n(⚠️4)")
 Rel(features, model, "Вектор признаков")
-Rel(features, rules, "Вектор признаков", "fallback, если модель недоступна")
+Rel(features, rules, "Вектор признаков\n(fallback, если модель недоступна)")
 Rel(model, calib, "Оценка риска\n(⚠️5)")
 Rel(calib, rules, "Top-N и оценки")
 Rel(rules, validator, "Операции с отметками правил и оценкой (или без оценки при fallback)")
+Rel(dispatcher, validator, "Вызов валидатора")
 Rel(validator, expert_queue, "ok или ok_with_notes\n(⚠️6)", "контракт: сообщение с validation_status и validation_notes")
 Rel(validator, quarantine, "quarantined", "критичные нарушения контракта")
 Rel(expert_queue, analyst, "Очередь на разбор")
@@ -48,6 +59,12 @@ Rel(monitor, log, "")
 Rel(monitor, expert_queue, "")
 Rel(monitor, model, "")
 Rel(monitor, features, "")
+
+Rel(queue_in, standard_rules, "Операции для штатного отбора\n(не зависит от ML-сервиса)")
+Rel(standard_rules, standard_queue, "Штатный отбор")
+Rel(standard_queue, analyst, "Штатная очередь на разбор\n(продолжает работать при сбое ML-сервиса)")
+
+Rel(retry_queue, dispatcher, "Повторная обработка после восстановления", "сверка входного потока с очередью, дедупликация по operation_id, пометка «обработано после сбоя»")
 
 note bottom of log
     ⚠️7
