@@ -47,7 +47,7 @@ Rel(features, model, "Вектор признаков")
 Rel(features, rules, "Вектор признаков\n(fallback, если модель недоступна)")
 Rel(model, calib, "Оценка риска\n(⚠️5)")
 Rel(calib, rules, "Top-N и оценки")
-Rel(rules, validator, "Операции с отметками правил и оценкой (или без оценки при fallback)")
+Rel(rules, validator, "Обычный путь: операция с отметками правил")
 Rel(dispatcher, validator, "Вызов валидатора")
 Rel(validator, expert_queue, "ok или ok_with_notes\n(⚠️6)", "контракт: сообщение с validation_status и validation_notes")
 Rel(validator, quarantine, "quarantined", "критичные нарушения контракта")
@@ -65,6 +65,10 @@ Rel(standard_rules, standard_queue, "Штатный отбор")
 Rel(standard_queue, analyst, "Штатная очередь на разбор\n(продолжает работать при сбое ML-сервиса)")
 
 Rel(retry_queue, dispatcher, "Повторная обработка после восстановления", "сверка входного потока с очередью, дедупликация по operation_id, пометка «обработано после сбоя»")
+
+' обход при отказе валидатора
+Rel(rules, expert_queue, "Обход при отказе валидатора: упрощённая проверка", "пометка «валидатор недоступен, проверено по упрощённой схеме»")
+Rel(rules, standard_queue, "Обязательный сигнал при отказе валидатора", "если кейс ещё не разобран; проверка дедупликации по operation_id")
 
 note bottom of log
     ⚠️7
